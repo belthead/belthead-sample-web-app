@@ -1,0 +1,91 @@
+services:
+  app:
+    # It doesn't bundle container image
+    image: "nginx:latest"
+    # At least one container should be set
+    essential: true
+    # You may override container's command
+    #command: "echo HelloWorld"
+    volumes:
+        # It is creating docker volume, and it can be shared between containers.
+      - share_vol01:/share
+        # You can bind specific file definition in container
+      - mount_type: file
+        source: local_file_mount_file01
+        destination: /usr/share/nginx/html/index2.html
+        # The RELATIVE PATH is considered to be mounted.
+        # AppRunner is going to bundle all these files during build process.
+        # If you don't use AppRunner, bundle file should contain the files.
+      - ./external_resource:/usr/share/nginx/html/hello-world.txt
+      - ebs_vol_01::/usr/share/nginx/html/ebs_vol_01
+    environment:
+      APPLICATION_NAME: 'BeltHead-Sample-Web-App'
+      # It will be refreshed when container task is initialized
+      SECRET_ENV_BY_BELTHEAD: bhrn::pallet:::secret:profile_id_01/abc.def
+      # AWS IAM role should be passed
+      SECRET_ENV_BY_AWS_SECRET_MANAGER: arn:aws:secretsmanager:us-west-1:00000000000:secret:SecretName-6RandomCharacters
+    ports:
+      - "80:8080" # EC2 security group is assigned to open to 80 port
+    # If you are omitting it, the container task is set always unhealthy.
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+  busy-box:  # Sidecar application can be seated
+    image: "busybox:latest"
+    command: echo "hello world by busy-box" > /share/echo.txt
+    volumes:
+      - share_vol01:/share
+
+files:
+  local_file_mount_file01:
+    content: |
+      <html><body>
+        <h1>Hello World! by LOCAL_SRC</h1>
+      </body></html>
+  local_file_mount_config01:
+    remote_src: "https://raw.githubusercontent.com/sa201-com/config-with-sops/refs/heads/main/README.md"
+
+volumes:
+  share_vol01:
+  ebs_vol_01:
+    # Automatically each instance is assigned independent EBS
+    driver_opts:
+      storage_class: "persistent"
+      volume_type: gp3
+      size: 10G
+      iops: 3000
+      # default=true
+      # If you want to persist after container is terminated, set 'delete:false'
+      delete: true
+
+# Only for AppRunner user
+# After build phase, local files are bundled and saved in S3
+# The local files means volumes are indicating with relative path.
+# It means you do not need to include them in container image.
+build:
+  # image can be omitted
+  image: "public.ecr.aws/codebuild/amazonlinux2-aarch64-standard:3.0"
+  environment:
+    aaa: ${BELTHEAD_PIPELINE_COMMIT_ID}
+    ABC_DEF: bhrn::config:::variable:profile_id_01/abc.def
+    ECR_URI_APP_01: 0202302.dkr.ecr.ap-northeast-1.amazonaws.com/prod-ecr/nginx
+  command:
+    - gradle build
+    - docker build -f ./infra/app/Dockerfile -t app_01:${BELTHEAD_PIPELINE_COMMIT_ID}
+    - docker tag app_01:${BELTHEAD_PIPELINE_COMMIT_ID} ${ECR_URI_APP_01}:app_01:${BELTHEAD_PIPELINE_COMMIT_ID}
+    - docker push ${ECR_URI_APP_01}:app_01:${BELTHEAD_PIPELINE_COMMIT_ID}
+    - docker compose build
+    - docker compose push
+
+# This is not used for container, but you can set it in console.
+launch_template:
+  instance_type: "t4g.nano"
+  vpc_id: ""
+  subnets: []
+  security_groups: []
+  # If the application requires IAM Permission, passed the instance profile here
+  iam_instance_profile_name: "BeltHead-Sample-Web-App-Instance"
+

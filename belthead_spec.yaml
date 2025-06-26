@@ -1,0 +1,64 @@
+services:
+  nginx:
+    image: "nginx:latest"
+    essential: true
+    volumes:
+      - share_vol01:/share
+      - mount_type: file
+        source: local_file_mount_file01
+        destination: /usr/share/nginx/html/index2.html
+      - ./external_resource:/usr/share/nginx/html/hello-world.txt
+      - ebs_vol_01::/usr/share/nginx/html/ebs_vol_01
+    environment:
+      APPLICATION_NAME: 'BeltHead-Sample-Web-App'
+      SECRET_ENV_BY_BELTHEAD: bhrn::pallet:::secret:profile_id_01/abc.def
+      SECRET_ENV_BY_AWS_SECRET_MANAGER: arn:aws:secretsmanager:us-west-1:00000000000:secret:SecretName-6RandomCharacters
+    ports:
+      - "80:8080"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+  busy-box:  # Sidecar application can be seated
+    image: "busybox:latest"
+    command: echo "hello world by busy-box" > /share/echo.txt
+    volumes:
+      - share_vol01:/share
+  app:
+    image: "amazoncorretto:21-jre"
+    essential: true
+    volumes:
+      - ./build/packages/belthead-sample-web-app.jar:/app/belthead-sample-web-app.jar
+files:
+  local_file_mount_file01:
+    content: |
+      <html><body>
+        <h1>Hello World! by LOCAL_SRC</h1>
+      </body></html>
+  local_file_mount_config01:
+    remote_src: "https://raw.githubusercontent.com/sa201-com/config-with-sops/refs/heads/main/README.md"
+
+volumes:
+  share_vol01:
+  ebs_vol_01:
+    driver_opts:
+      storage_class: "persistent"
+      volume_type: gp3
+      size: 10G
+      iops: 3000
+
+build:
+  image: "public.ecr.aws/codebuild/amazonlinux2-aarch64-standard:3.0"
+  environment:
+    BELTHEAD_PIPELINE_COMMIT_ID: ${BELTHEAD_PIPELINE_COMMIT_ID}
+    ECR_URI_APP_01: 0202302.dkr.ecr.ap-northeast-1.amazonaws.com/prod-ecr/nginx
+  command:
+    - gradle build
+    - ls -lh build
+    - docker build -f ./infra/app/Dockerfile -t app_01:${BELTHEAD_PIPELINE_COMMIT_ID}
+    - docker tag app_01:${BELTHEAD_PIPELINE_COMMIT_ID} ${ECR_URI_APP_01}:app_01:${BELTHEAD_PIPELINE_COMMIT_ID}
+    - docker push ${ECR_URI_APP_01}:app_01:${BELTHEAD_PIPELINE_COMMIT_ID}
+    - docker compose build
+    - docker compose push
